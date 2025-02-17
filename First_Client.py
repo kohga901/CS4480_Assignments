@@ -6,11 +6,11 @@ with socket(AF_INET, SOCK_STREAM) as skt:
   # skt.send(b'GET http://www.flux.utah.edu HTTP/1.0 \r\n\r\n')
   # buffer = input()
   # skt.send(b'GET http://www.flux.utah.edu HTTP/1.0 \r\n\r\n')
-  skt.send(b'a')
-  skt.send(b'b')
-  skt.send(b'c')
-  buffer = input()
-  skt.send(b'd')
+  # skt.send(b'a')
+  # skt.send(b'b')
+  # skt.send(b'c')
+  # buffer = input()
+  # skt.send(b'd')
 
 
 
@@ -19,8 +19,14 @@ with socket(AF_INET, SOCK_STREAM) as skt:
 
 
   # buffer = input()
-  # skt.send(b'POST http://localhost:8080/simple.html HTTP/1.0\r\n\r\n')
+  # skt.send(b'GET http://localhost:8765/ HTTP/1.0\r\n\r\n')
   # buffer = input()
   # skt.send(b'Wrongmethod http://localhost:8080/simple.html HTTP/1.0\r\n\r\n')
+  # skt.send(b'GET http://www.flux.utah.edu/proxy/cache/enable HTTP/1.0\r\n\r\n')
+  
+  skt.send(b'GET http://www.flux.utah.edu/cs4480/simple.html HTTP/1.0\r\n\r\n')
+  
+  response = skt.recv(1000000)
+  print(response.decode())
 
 

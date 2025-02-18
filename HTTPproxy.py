@@ -212,7 +212,7 @@ def Blocklist_Control(path):
             path_split = path.split("/")
             domain = path_split[len(path_split) - 1]
             blocklist.append(domain)
-            logging.debug(f"Adding {domain} blocklist.")
+            logging.debug(f"Adding {domain} to blocklist.")
 
         if ("/remove/" in path):
             path_split = path.split("/")

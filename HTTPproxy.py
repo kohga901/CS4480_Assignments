@@ -7,7 +7,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 import threading
 from datetime import datetime
-
+import time
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -16,7 +16,9 @@ logging.basicConfig(level=logging.DEBUG)
 # The key is the first line of a request message. (e.g. GET URL Version).
 # The value is the object with a If-Modified-Since header.
 cache = {}
-cache_status = True
+cache_status = False
+blocklist = []
+blocklist_status = False
 
 # Signal handler for pressing ctrl-c
 def ctrl_c_pressed(signal, frame):
@@ -142,28 +144,86 @@ def Validate_Request(request):
 
 def Store_In_Cache(first_line, response_from_origin):
     # Parse the response from the origin.
-    parsed = response_from_origin.split("\r\n\r\n")
-    parsed = parsed[0]
+    response = response_from_origin.split("\r\n\r\n")
+    # The item at index 0 is the response line and all headers.
+    parsed = response[0]
     parsed += "\r\n"
     # Get the date.
-    time = datetime.now()
-    time_formatted = time.strftime("%a, %d %b %Y %H:%M:%S %ZGMT")
+    time_formatted = time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())
     # Add the date of when the object is stored in the cache.
-    parsed += f"Last-Modified: {time_formatted} \r\n\r\n"
+    parsed += f"If-Modified-Since: {time_formatted} \r\n\r\n"
+    # The item at index 1 is the data of the response.
+    parsed += response[1]
     cache[first_line] = parsed
     return parsed
 
-def Get_IFMS_Header(response):
+# Gets the If-Modified-Since header from the object stored in the cache.
+def Get_IFMS_Header(object):
     header = "If-Modified-Since:"
-    index = response.find(header)
+    index = object.find(header)
     print(index)
-    string = response[index : index + 48]
+    string = object[index : index + 48]
     return string
+# Checks if the host portion of the URL in the response contains a domain 
+# that is in the blocked domain list.
+def Is_URL_Blocked(host):
+    for blocked_domain in blocklist:
+        if (host in blocked_domain):
+            return True
+
+# Controls te enabling, disabling and flushing of the cache. Returns true if the
+# cache was modified and closes connection with client.
+def Cache_Control(path):
+    global cache_status
+    if ("/proxy" in path and "/cache" in path):
+        logging.debug("Enabling caching.")
+        if ("/enable" in path):
+            cache_status = True
+
+        logging.debug("Disabling caching.")
+        if ("/disable" in path):
+            cache_status = False
+
+        logging.debug("Flushing cache.")
+        if ("/flush" in path):
+            cache.clear()            
+        return True
+    else:
+        return False
+# Controls te enabling, disabling, adding, removal and flushing of the blocklist. 
+# Returns true if the blocklist was modified and closes connection with client.
+def Blocklist_Control(path):
+    if ("/proxy" in path and "/blocklist" in path):
+        logging.debug("Enabling blocklist.")
+        if ("/enable" in path):
+            blocklist_status = True
+
+        logging.debug("Disabling blocklist.")
+        if ("/disable" in path):
+            blocklist_status = False
+            
+        logging.debug("Flushing blocklist.")
+        if ("/flush" in path):
+            blocklist.clear()
+        
+        if ("/add/" in path):
+            path_split = path.split("/")
+            domain = path_split[len(path_split) - 1]
+            blocklist.append(domain)
+
+        if ("/remove/" in path):
+            path_split = path.split("/")
+            domain = path_split[len(path_split) - 1]
+            blocklist.remove(domain) 
+        return True
+    else:
+        return False
 
 # This function is called when a client has been accepted on a socket. It takes in a client socket
 # and handles the connections that follow.
 def HandleConnections(client_skt, client_number):
     global cache_status
+    global cache
     with socket(AF_INET, SOCK_STREAM) as origin_skt:
         try:
             # Recieve request from client.
@@ -186,21 +246,25 @@ def HandleConnections(client_skt, client_number):
                 client_skt.close()
 
             # Check if the request enables or disables caching.
-            if ("/proxy/" in path and "/cache/" in path):
-                if ("/enable/" in path):
-                    cache_status = True
-                if ("/disable/" in path):
-                    cache_status = False
-                if ("/proxy/cache/flush" in path):
-                    cache.clear()
-            
-                # For these client requests, the proxy closes the connection after.
-                client_skt.send(b'HTTP/1.0 200 OK\r\nConnection: close\r\n\r\n')
-                return
+            logging.debug(f"Checking if client {client_number} modifies the cache.")
+            state = Cache_Control(path)
+            if (state):
+                # If cache was modified in anyway, send message to client and close connection.
+                 client_skt.send(b'HTTP/1.0 200 OK\r\nConnection: close\r\n\r\n')
+            logging.debug(f"Request of client {client_number} did not modify the cache.")
+            state = Blocklist_Control(path)
+            if (state):
+                # If blocklist was modified in anyway, send message to client and close connection.
+                 client_skt.send(b'HTTP/1.0 200 OK\r\nConnection: close\r\n\r\n')
+               
+            # Check if the requested domain is in the blocklist.
+            if (blocklist_status == True and Is_URL_Blocked(host)):
+                logging.debug(f"Blocked domain found. Sending appropriate response code to client {client_number}")
+                client_skt.send(b'HTTP/1.0 403 Forbidden')
             
             # Prepare the headers that will be used to assemble the request message that is to be sent to the server.
             prepared_headers = Prepare_Headers_For_Request(headers)
-        
+
             # Check if the requested object is in the cache.
             
             # Get the first line of the request because that is they key in the cache.
@@ -208,93 +272,96 @@ def HandleConnections(client_skt, client_number):
             first_line = parsed_request[0]
 
             # If cache is enabled, check if the object is in the cache.
-            if (cache_status):
+            
+            if (cache_status and first_line in cache.keys()):
                 logging.debug("Checking if requested object is in cache.")
-                if (first_line in cache.keys()):
-                    logging.debug("Requested object found in cache.")
-                    cached_object = cache.keys[first_line]
-                    # Get the IFM header from the stored object
-                    IFM_header = Get_IFMS_Header(request_from_client.decode())
 
-                    # Add the IFM Header to the get request that is to be sent to the server.
-                    request_to_origin = f"{method} http://{host}{path} {version}\r\nConnection: close\r\n{prepared_headers}{IFM_header}\r\n\r\n"
-                    logging.debug(f"The request to send to client {client_number}'s origin is:\r\n{request_to_origin}")
-                    request_to_origin = request_to_origin.encode()
+                logging.debug("Requested object found in cache.")
+                cached_object = cache[first_line]
 
-                    # Check if the object has been modified by sending the request to the server.  
-                    logging.debug(f"The port specified in client {client_number}'s request is: {port}")
-                    origin_skt.connect((host, port))
-                    logging.debug(f"Proxy connected to client {client_number}'s origin server.")
-                    origin_skt.send()
-                    logging.debug(f"Request to client {client_number}'s origin server sent.")
+                # Get the IFM header from the stored object.
+                IFM_header = Get_IFMS_Header(cached_object)
 
-                    # Receiving the message in seperate sections.
-                    full_response_from_origin = b''
-                    message = None
-                    while message != b'':
-                        message = origin_skt.recv(10000000)
-                        full_response_from_origin += message
-                    response_from_origin = full_response_from_origin
-                    logging.debug(f"Received response from client {client_number}'s origin server:\r\n{response_from_origin}")
+                # Add the IFM Header to the get request that is to be sent to the server.
+                request_to_origin = f"{method} http://{host}{path} {version}\r\nConnection: close\r\n{prepared_headers}{IFM_header}\r\n\r\n"
+                logging.debug(f"The request to send to client {client_number}'s origin is:\r\n{request_to_origin}")
+                request_to_origin = request_to_origin.encode()
 
-                    # If not modified, send the cached object to server.
-                    response_from_origin = response_from_origin.decode()
-                    if ("304" in response_from_origin):
-                        logging.debug(f"Object in {client_number}'s request has not been modified since last caching.")
-                        response_from_origin = response_from_origin.encode()
-                        client_skt.sendall(cached_object)
-                        logging.debug(f"Cached object sent to client {client_number}.")
+                # Check if the object has been modified by sending the request to the server.  
+                logging.debug(f"The port specified in client {client_number}'s request is: {port}")
+                origin_skt.connect((host, port))
+                logging.debug(f"Proxy connected to client {client_number}'s origin server.")
+                origin_skt.send(request_to_origin)
+                logging.debug(f"Request to client {client_number}'s origin server sent.")
 
-                    # If the object was modified, store the object in the cache and forward it to the client.
-                    elif ("200" in response_from_origin):
-                        logging.debug(f"Object in {client_number}'s request has been modified since last caching.")
-                        logging.debug(f"Storing object from {client_number}'s request in caching.")
-                        response_from_origin = Store_In_Cache(first_line, response_from_origin)
-                        
-                        # Generate a If-Modified-Since header and isnert it into the object before caching.
-                        
-                        cache[first_line] = response_from_origin.decode()
-                        logging.debug(f"Sending cached object to client {client_number}.")
-                        response_from_origin = response_from_origin.encode()
-                        client_skt.sendall(cache[first_line])
-                else:
-                    logging.debug(f"Requested object for client {client_number} is not in cache. Sending request to server")
+                # Receiving the message in seperate sections.
+                full_response_from_origin = b''
+                message = None
+                while message != b'':
+                    message = origin_skt.recv(10000000)
+                    full_response_from_origin += message
+                response_from_origin = full_response_from_origin
+                logging.debug(f"Received response from client {client_number}'s origin server:\r\n{response_from_origin}")
 
+                # If not modified, send the cached object to server.
+                response_from_origin = response_from_origin.decode()
+                if ("304" in response_from_origin):
+                    logging.debug(f"Object in {client_number}'s request has not been modified since last caching.")
+                    client_skt.sendall(cached_object.encode())
+                    logging.debug(f"Cached object sent to client {client_number}.")
+                    print(cache[first_line])
+
+                # If the object was modified, store the object in the cache and forward it to the client.
+                elif ("200" in response_from_origin):
+                    logging.debug(f"Object in {client_number}'s request has been modified since last caching.")
+                    logging.debug(f"Storing object from {client_number}'s request in caching.")
+
+                    # Generate a If-Modified-Since header and insert it into the object before caching.
+                    # Put the modified response into the variable.
+                    response_from_origin = Store_In_Cache(first_line, response_from_origin)                       
+
+                    logging.debug(f"Sending cached object to client {client_number}.")
+                    client_skt.sendall(response_from_origin.encode())
+                    return
+            
             # If the object is not in the cache, send the request to the server and put the response in the cache.
             else:
+                logging.debug(f"Either cache is disabled orrRequested object for client {client_number} is not in cache. Sending request to server")
                 request_to_origin = ""
 
-            request_to_origin = f"{method} http://{host}{path} {version}\r\nConnection: close\r\n{prepared_headers}\r\n"
-            logging.debug(f"The request to send to client {client_number}'s origin is:\r\n{request_to_origin}")
-                
-            request_to_origin = request_to_origin.encode()
-            # Attempt to establish connection origin server.
-            logging.debug(f"The port specified in client {client_number}'s request is: {port}")
-            origin_skt.connect((host, port))
-            logging.debug(f"Proxy connected to client {client_number}'s origin server.")
+                request_to_origin = f"{method} http://{host}{path} {version}\r\nConnection: close\r\n{prepared_headers}\r\n"
+                logging.debug(f"The request to send to client {client_number}'s origin is:\r\n{request_to_origin}")
+                    
+                request_to_origin = request_to_origin.encode()
+                # Attempt to establish connection origin server.
+                logging.debug(f"The port specified in client {client_number}'s request is: {port}")
+                origin_skt.connect((host, port))
+                logging.debug(f"Proxy connected to client {client_number}'s origin server.")
 
-            origin_skt.send(request_to_origin)
-            logging.debug(f"Request to client {client_number}'s origin server sent.")
+                origin_skt.send(request_to_origin)
+                logging.debug(f"Request to client {client_number}'s origin server sent.")
 
-            # Receiving the message in seperate sections.
-            full_response_from_origin = b''
-            message = None
-            while message != b'':
-                message = origin_skt.recv(10000000)
-                full_response_from_origin += message
-            response_from_origin = full_response_from_origin
-            logging.debug(f"Received response from client {client_number}'s origin server:\r\n{response_from_origin}")
+                # Receiving the message in seperate sections.
+                full_response_from_origin = b''
+                message = None
+                while message != b'':
+                    message = origin_skt.recv(10000000)
+                    full_response_from_origin += message
+                response_from_origin = full_response_from_origin
+                logging.debug(f"Received response from client {client_number}'s origin server:\r\n{response_from_origin}")
 
-            # Store the object thats in the response inside the cache.
-            logging.debug(f"Storing object from {client_number}'s request in caching.")
-            response_from_origin = Store_In_Cache(first_line, response_from_origin)
-            cache[first_line] = response_from_origin
+                # If cache is enabled, store the object inside the cache.
+                if (cache_status and "200 OK" in response_from_origin.decode()):
+                    logging.debug(f"Storing object from client {client_number}'s request in caching.")
+                    modified_response = ""
+                    modified_response = Store_In_Cache(first_line, response_from_origin.decode())
+                    response_from_origin = modified_response.encode()
 
-            # Send the response to the client.
-            client_skt.sendall(response_from_origin)
-            logging.debug(f"Origin server response sent to client {client_number}.")
+                # Send the response to the client.
+                client_skt.sendall(response_from_origin)
+                logging.debug(f"Origin server response sent to client {client_number}.")
 
-            client_skt.close()
+                client_skt.close()
         except Exception as e:
                 logging.debug(f"Error in handling connection. Error: {e}")
                 client_skt.send(b"HTTP/1.0 400 Bad Request")

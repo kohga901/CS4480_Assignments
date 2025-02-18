@@ -170,6 +170,7 @@ def Is_URL_Blocked(host):
     for blocked_domain in blocklist:
         if (host in blocked_domain):
             return True
+    return False
 
 # Controls te enabling, disabling and flushing of the cache. Returns true if the
 # cache was modified and closes connection with client.
@@ -193,28 +194,32 @@ def Cache_Control(path):
 # Controls te enabling, disabling, adding, removal and flushing of the blocklist. 
 # Returns true if the blocklist was modified and closes connection with client.
 def Blocklist_Control(path):
+    global blocklist_status
     if ("/proxy" in path and "/blocklist" in path):
-        logging.debug("Enabling blocklist.")
         if ("/enable" in path):
+            logging.debug("Enabling blocklist.")
             blocklist_status = True
-
-        logging.debug("Disabling blocklist.")
+        
         if ("/disable" in path):
+            logging.debug("Disabling blocklist.")
             blocklist_status = False
-            
-        logging.debug("Flushing blocklist.")
+        
         if ("/flush" in path):
+            logging.debug("Flushing blocklist.")
             blocklist.clear()
         
         if ("/add/" in path):
             path_split = path.split("/")
             domain = path_split[len(path_split) - 1]
             blocklist.append(domain)
+            logging.debug(f"Adding {domain} blocklist.")
 
         if ("/remove/" in path):
             path_split = path.split("/")
             domain = path_split[len(path_split) - 1]
             blocklist.remove(domain) 
+            logging.debug(f"Removing {domain} blocklist.")
+
         return True
     else:
         return False
@@ -224,6 +229,8 @@ def Blocklist_Control(path):
 def HandleConnections(client_skt, client_number):
     global cache_status
     global cache
+    global blocklist_status
+    global blocklist
     with socket(AF_INET, SOCK_STREAM) as origin_skt:
         try:
             # Recieve request from client.
@@ -244,19 +251,29 @@ def HandleConnections(client_skt, client_number):
                 logging.debug(f"Error code response sent to client {client_number}.")
                 client_skt.send(error_message.encode())
                 client_skt.close()
+                return
 
             # Check if the request enables or disables caching.
             logging.debug(f"Checking if client {client_number} modifies the cache.")
             state = Cache_Control(path)
             if (state):
                 # If cache was modified in anyway, send message to client and close connection.
-                 client_skt.send(b'HTTP/1.0 200 OK\r\nConnection: close\r\n\r\n')
+                logging.debug(f"Request of client {client_number} modified the cache. Sending response and closing Connection.")
+                client_skt.send(b'HTTP/1.0 200 OK\r\nConnection: close\r\n\r\n')
+                client_skt.close()
+                return
             logging.debug(f"Request of client {client_number} did not modify the cache.")
+
+            logging.debug(f"Checking if client {client_number} modifies the blocklist.")
             state = Blocklist_Control(path)
             if (state):
                 # If blocklist was modified in anyway, send message to client and close connection.
-                 client_skt.send(b'HTTP/1.0 200 OK\r\nConnection: close\r\n\r\n')
-               
+                logging.debug(f"Request of client {client_number} modified the blocklist. Sending response and closing Connection.")
+                client_skt.send(b'HTTP/1.0 200 OK\r\nConnection: close\r\n\r\n')
+                client_skt.close()
+                return
+            logging.debug(f"Request of client {client_number} did not modify the blocklist.")
+            
             # Check if the requested domain is in the blocklist.
             if (blocklist_status == True and Is_URL_Blocked(host)):
                 logging.debug(f"Blocked domain found. Sending appropriate response code to client {client_number}")

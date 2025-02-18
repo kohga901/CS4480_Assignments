@@ -40,7 +40,16 @@ def Store_In_Cache(first_line, response_from_origin):
     parsed += f"Last-Modified: {time_formatted} \r\n\r\n"
     # cache[first_line] = parsed
     return parsed
+blocklist = []
+# message = 'HTTP/1.1 200 OK\r\nDate: Sun, 26 Sep 2010 20:09:20 GMT\r\nServer: Apache/2.0.52 (CentOS)\r\nIf-Modified-Since: Tue, 30 Oct 2007 17:00:02 GMT\r\nETag: "17dc6-a5c-bf716880"\r\nAccept-Ranges: bytes\r\nContent-Length: 2652\r\nKeep-Alive: timeout=10, max=100\r\nConnection: Keep-Alive\r\nContent-Type: text/html; charset=ISO-8859-1\r\n\r\n'
+# response = Store_In_Cache("", message)
 
-message = 'HTTP/1.1 200 OK\r\nDate: Sun, 26 Sep 2010 20:09:20 GMT\r\nServer: Apache/2.0.52 (CentOS)\r\nIf-Modified-Since: Tue, 30 Oct 2007 17:00:02 GMT\r\nETag: "17dc6-a5c-bf716880"\r\nAccept-Ranges: bytes\r\nContent-Length: 2652\r\nKeep-Alive: timeout=10, max=100\r\nConnection: Keep-Alive\r\nContent-Type: text/html; charset=ISO-8859-1\r\n\r\n'
-response = Store_In_Cache("", message)
-print(response)
+blocklist.append('flux')
+
+def Is_URL_Blocked(host):
+    for blocked_domain in blocklist:
+        if (host in blocked_domain):
+            return True
+    return False
+state = Is_URL_Blocked("flux")
+print(state)

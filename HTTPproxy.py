@@ -143,6 +143,7 @@ def Validate_Request(request):
     return error, method, host, path, port, version, headers
 
 def Store_In_Cache(first_line, response_from_origin):
+    global cache
     # Parse the response from the origin.
     response = response_from_origin.split("\r\n\r\n")
     # The item at index 0 is the response line and all headers.
@@ -161,7 +162,6 @@ def Store_In_Cache(first_line, response_from_origin):
 def Get_IFMS_Header(object):
     header = "If-Modified-Since:"
     index = object.find(header)
-    print(index)
     string = object[index : index + 48]
     return string
 # Checks if the host portion of the URL in the response contains a domain 
@@ -169,13 +169,16 @@ def Get_IFMS_Header(object):
 def Is_URL_Blocked(host):
     for blocked_domain in blocklist:
         if (host in blocked_domain):
+            logging.debug("Flux found in blocklist.")
             return True
+    logging.debug("Flux not found in blocklist.")
     return False
 
 # Controls te enabling, disabling and flushing of the cache. Returns true if the
 # cache was modified and closes connection with client.
 def Cache_Control(path):
     global cache_status
+    global cache
     if ("/proxy" in path and "/cache" in path):
         logging.debug("Enabling caching.")
         if ("/enable" in path):
@@ -195,6 +198,7 @@ def Cache_Control(path):
 # Returns true if the blocklist was modified and closes connection with client.
 def Blocklist_Control(path):
     global blocklist_status
+    global blocklist
     if ("/proxy" in path and "/blocklist" in path):
         if ("/enable" in path):
             logging.debug("Enabling blocklist.")
@@ -252,7 +256,7 @@ def HandleConnections(client_skt, client_number):
                 client_skt.send(error_message.encode())
                 client_skt.close()
                 return
-
+            state = False
             # Check if the request enables or disables caching.
             logging.debug(f"Checking if client {client_number} modifies the cache.")
             state = Cache_Control(path)
@@ -274,10 +278,23 @@ def HandleConnections(client_skt, client_number):
                 return
             logging.debug(f"Request of client {client_number} did not modify the blocklist.")
             
+
             # Check if the requested domain is in the blocklist.
-            if (blocklist_status == True and Is_URL_Blocked(host)):
+            logging.debug(f"Checking if client {client_number}'s request contains a blocked host.")
+            logging.debug(f"Blocklist: {blocklist}")
+            state = Is_URL_Blocked(host)
+            logging.debug(f"State is: {state}")
+            logging.debug(f"Host is: {host}")
+            logging.debug(f"Host is: {host}")
+
+            for blocked_domain in blocklist:
+                if (host in blocked_domain):
+                    state = True
+            logging.debug(f"State is: {state}")
+            if (blocklist_status and state):
                 logging.debug(f"Blocked domain found. Sending appropriate response code to client {client_number}")
                 client_skt.send(b'HTTP/1.0 403 Forbidden')
+                return
             
             # Prepare the headers that will be used to assemble the request message that is to be sent to the server.
             prepared_headers = Prepare_Headers_For_Request(headers)

@@ -168,10 +168,8 @@ def Get_IFMS_Header(object):
 # that is in the blocked domain list.
 def Is_URL_Blocked(host):
     for blocked_domain in blocklist:
-        if (host in blocked_domain):
-            logging.debug("Flux found in blocklist.")
+        if (blocked_domain in host):
             return True
-    logging.debug("Flux not found in blocklist.")
     return False
 
 # Controls te enabling, disabling and flushing of the cache. Returns true if the
@@ -280,17 +278,8 @@ def HandleConnections(client_skt, client_number):
             
 
             # Check if the requested domain is in the blocklist.
-            logging.debug(f"Checking if client {client_number}'s request contains a blocked host.")
-            logging.debug(f"Blocklist: {blocklist}")
+            logging.debug(f"Checking if the request of client {client_number} is in blocklist.")
             state = Is_URL_Blocked(host)
-            logging.debug(f"State is: {state}")
-            logging.debug(f"Host is: {host}")
-            logging.debug(f"Host is: {host}")
-
-            for blocked_domain in blocklist:
-                if (host in blocked_domain):
-                    state = True
-            logging.debug(f"State is: {state}")
             if (blocklist_status and state):
                 logging.debug(f"Blocked domain found. Sending appropriate response code to client {client_number}")
                 client_skt.send(b'HTTP/1.0 403 Forbidden')

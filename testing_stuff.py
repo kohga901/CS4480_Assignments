@@ -51,5 +51,5 @@ def Is_URL_Blocked(host):
         if (host in blocked_domain):
             return True
     return False
-state = Is_URL_Blocked("flux")
+state = Is_URL_Blocked("www.flux.utah.edu")
 print(state)

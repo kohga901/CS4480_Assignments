@@ -1,3 +1,6 @@
+"""
+This is a POX controller.
+"""
 from pox.core import core
 import pox.openflow.libopenflow_01 as of
 from mininet.net import Mininet

@@ -21,6 +21,8 @@ import pox.openflow.libopenflow_01 as of
 
 
 class Controller(object):
+
+    status = True
     """ 
     This is a controller class that handles packets.
     
@@ -41,7 +43,6 @@ class Controller(object):
         log.info("Initializing the controller.")
 
 
-
     def handle_PacketIn(self, event):
         """
         This method handles the packets that come into the controller.
@@ -60,10 +61,9 @@ class Controller(object):
             
         
         # If not arp packet, check if its an ICMP packet.
-        icmp_packet = packet.find('icmp')
-        if icmp_packet:
+        if packet.type == ethernet.IP_TYPE:
             log.info("ICMP packet received by controller.")
-            self.handle_ICMP_packet(event, icmp_packet)
+            self.handle_ICMP_packet(event, packet)
 
         return  
         
@@ -89,6 +89,10 @@ class Controller(object):
             if (arp_packet.protodst == IPAddr("10.0.0.10")):
                 if (status):
                     arp_reply.hwsrc =  EthAddr("00:00:00:00:00:05")
+                    status = False
+                else:
+                    arp_reply.hwsrc =  EthAddr("00:00:00:00:00:06")
+                    status = True
 
             if (arp_packet.protodst == IPAddr("10.0.0.1")):
                 arp_reply.hwsrc = EthAddr("00:00:00:00:00:01")
@@ -98,7 +102,8 @@ class Controller(object):
                 arp_reply.hwsrc = EthAddr("00:00:00:00:00:03")
             if (arp_packet.protodst == IPAddr("10.0.0.4")):
                 arp_reply.hwsrc = EthAddr("00:00:00:00:00:04")
-        
+
+            # Constructing an ARP REPLY packet.
             e = ethernet(type=packet.type, src=event.connection.eth_addr,
                             dst=arp_packet.hwsrc)
             e.payload = arp_reply
@@ -107,8 +112,7 @@ class Controller(object):
 
             msg = of.ofp_packet_out()
             msg.data = e.pack()
-            msg.actions.append(of.ofp_action_output(port =
-                                                    of.OFPP_IN_PORT))
+            msg.actions.append(of.ofp_action_output(port = of.OFPP_IN_PORT))
             msg.in_port = inport
             event.connection.send(msg)
 
@@ -116,24 +120,32 @@ class Controller(object):
 
             # Creating a match rule for the switch.
             msg = of.ofp_flow_mod()
-            msg.match.in_port = 1
+            msg.match.in_port = inport
             msg.match.dl_type = 0x0800
             msg.match.nw_dst = IPAddr("10.0.0.10")
-            msg.match.nw_src = IPAddr("10.0.0.1")
-            msg.actions.append(of.ofp_action_nw_addr.set_dst(IPAddr("10.0.0.5")))
+            msg.match.nw_src = arp_packet.protosrc
+            if (status):
+                address = "10.0.0.6"
+            else:
+                address = "10.0.0.5"
+            msg.actions.append(of.ofp_action_nw_addr.set_dst(IPAddr(address)))
 
             # Telling the switch to go throughout port 5.
-            out_action = of.ofp_action_output(port = 5)
+            if (address == "10.0.0.5"):
+                out_port = 5
+            else:
+                out_port = 6
+            out_action = of.ofp_action_output(port = out_port)
             msg.actions.append(out_action)
             event.connection.send(msg)
 
             msg = of.ofp_flow_mod()
-            msg.match.in_port = 5
+            msg.match.in_port = out_port
             msg.match.dl_type = 0x0800
-            msg.match.nw_dst = IPAddr("10.0.0.1")
-            msg.match.nw_src = IPAddr("10.0.0.5")
+            msg.match.nw_dst = arp_packet.protosrc
+            msg.match.nw_src = IPAddr(address)
             msg.actions.append(of.ofp_action_nw_addr.set_src(IPAddr("10.0.0.10")))
-            out_action = of.ofp_action_output(port = 1)
+            out_action = of.ofp_action_output(port = inport)
             msg.actions.append(out_action)
             event.connection.send(msg)
 
@@ -141,25 +153,18 @@ class Controller(object):
         
 
     def handle_ICMP_packet(self, event, icmp_packet):
-        log.info("I dont know what to do with this icmp packet.")
-        msg = of.ofp_flow_mod()
+        log.info("Telling the switch to forward this ICMP Packet to the correct port.")
+        ip_packet = icmp_packet.payload
 
-        msg.match.in_port = 1
-        msg.match.dl_type = 0x0800
-        msg.match.nw_dst = IPAddr("10.0.0.10")
-
-        msg.actions.append(of.ofp_action_nw_addr.set_dst(IPAddr("10.0.0.5")))
-
-        self.connection.send(msg)
-
-        msg = of.ofp_flow_mod()
-        msg.match.in_port = 1
-        msg.match.dl_type = 0x0800
-        msg.match.nw_dst = IPAddr("10.0.0.1")
-
-        msg.actions.append(of.ofp_action_nw_addr.set_src(IPAddr("10.0.0.10")))
-
-        self.connection.send(msg)
+        msg = of.ofp_packet_out(data = event.ofp)
+        if event.port == 1 or event.port == 3:
+            out_port = 5
+        else:
+            out_port = 6
+        
+        msg.actions.append(of.ofp_action_output(port = out_port))
+        msg.in_port = out_port
+        event.connection.send(msg)
 
 def launch():
     """

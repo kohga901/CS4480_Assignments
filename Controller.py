@@ -41,24 +41,37 @@ class Controller(object):
         log.info("Initializing the controller.")
 
 
+
     def handle_PacketIn(self, event):
         """
         This method handles the packets that come into the controller.
         When a packet is sent to the controller, it actually comes in as an event. 
         Then you have to parse that event to turn it into a packet.
         """
-        # Getting the port of the event.
-        inport = event.port 
         # Extracting the packet from the event.
         packet = event.parsed
         # Checking if the packet is an arp request packet.
         arp_packet = packet.find('arp')
-        if not arp_packet: 
-            forward_Packet(event)
-            
-        log.info("ARP request received by controller.")
+        # make this a global variable
         status = True
+        if arp_packet: 
+            log.info("ARP request received by controller.")
+            self.handle_ARP_Packet(event, packet, arp_packet, status)        
+            
+        
+        # If not arp packet, check if its an ICMP packet.
+        icmp_packet = packet.find('icmp')
+        if icmp_packet:
+            log.info("ICMP packet received by controller.")
+            self.handle_ICMP_packet(event, icmp_packet)
 
+        return  
+        
+    def handle_ARP_Packet(self, event, packet, arp_packet, status):
+        # Getting the port of the event.
+        inport = event.port 
+        # Extracting the packet from the event.
+        packet = event.parsed
         # Check if the packet is an ARP REQUEST.
         if (arp_packet.opcode == arp.REQUEST):
             # Build an ARP REPLY packet.
@@ -75,8 +88,8 @@ class Controller(object):
             # If the ARP REQUEST's dst IP is 10.0.0.10, return the mac address 00:00:00:00:00:05.
             if (arp_packet.protodst == IPAddr("10.0.0.10")):
                 if (status):
-                    # check if just assigning it like this works or not
                     arp_reply.hwsrc =  EthAddr("00:00:00:00:00:05")
+
             if (arp_packet.protodst == IPAddr("10.0.0.1")):
                 arp_reply.hwsrc = EthAddr("00:00:00:00:00:01")
             if (arp_packet.protodst == IPAddr("10.0.0.2")):
@@ -90,7 +103,8 @@ class Controller(object):
                             dst=arp_packet.hwsrc)
             e.payload = arp_reply
 
-            log.info("Answering ARP for %s" % (str(arp_reply.protodst)))
+            log.info("Answering ARP that was received from: %s" % (str(arp_reply.protodst)))
+
             msg = of.ofp_packet_out()
             msg.data = e.pack()
             msg.actions.append(of.ofp_action_output(port =
@@ -111,7 +125,7 @@ class Controller(object):
             # Telling the switch to go throughout port 5.
             out_action = of.ofp_action_output(port = 5)
             msg.actions.append(out_action)
-            self.connection.send(msg)
+            event.connection.send(msg)
 
             msg = of.ofp_flow_mod()
             msg.match.in_port = 5
@@ -121,36 +135,31 @@ class Controller(object):
             msg.actions.append(of.ofp_action_nw_addr.set_src(IPAddr("10.0.0.10")))
             out_action = of.ofp_action_output(port = 1)
             msg.actions.append(out_action)
-            self.connection.send(msg)
-        
-        else:
+            event.connection.send(msg)
+
             return
         
-    def forward_Packet(self, event):
-        msg = of.ofp_action_output(port = 5)
+
+    def handle_ICMP_packet(self, event, icmp_packet):
+        log.info("I dont know what to do with this icmp packet.")
+        msg = of.ofp_flow_mod()
+
+        msg.match.in_port = 1
+        msg.match.dl_type = 0x0800
+        msg.match.nw_dst = IPAddr("10.0.0.10")
+
+        msg.actions.append(of.ofp_action_nw_addr.set_dst(IPAddr("10.0.0.5")))
+
         self.connection.send(msg)
-        
-    # def add_flow_rules(self, event):
-        # msg = of.ofp_flow_mod()
-        # msg.match.in_port = 1
-        # msg.match.dl_type = 0x0800
-        # msg.match.nw_dst = IPAddr("10.0.0.1")
-        # msg.match.nw_src = IPAddr("10.0.0.10")
-        # msg.actions.append(of.ofp_action_nw_addr.set_dst(IPAddr("10.0.0.5")))
 
-        # log.info("Logging.")
+        msg = of.ofp_flow_mod()
+        msg.match.in_port = 1
+        msg.match.dl_type = 0x0800
+        msg.match.nw_dst = IPAddr("10.0.0.1")
 
-        # self.connection.send(msg)
-        # msg = of.ofp_flow_mod()
-        # msg.match.in_port = 1
-        # msg.match.dl_type = 0x0800
-        # msg.match.nw_dst = IPAddr("10.0.0.5")
-        # msg.match.nw_src = IPAddr("10.0.0.1")
-        # msg.actions.append(of.ofp_action_nw_addr.set_src(IPAddr("10.0.0.10")))
+        msg.actions.append(of.ofp_action_nw_addr.set_src(IPAddr("10.0.0.10")))
 
-        # log.info("Logging.")
-
-        # self.connection.send(msg)
+        self.connection.send(msg)
 
 def launch():
     """

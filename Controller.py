@@ -22,6 +22,12 @@ import pox.openflow.libopenflow_01 as of
 
 class Controller(object):
 
+    macToPort= {"00:00:00:00:00:01" : 1, 
+                "00:00:00:00:00:02" : 2, 
+                "00:00:00:00:00:03" : 3, 
+                "00:00:00:00:00:04" : 4, 
+                "00:00:00:00:00:05" : 5, 
+                "00:00:00:00:00:06" : 6}
     status = True
     """ 
     This is a controller class that handles packets.
@@ -53,21 +59,20 @@ class Controller(object):
         packet = event.parsed
         # Checking if the packet is an arp request packet.
         arp_packet = packet.find('arp')
-        # make this a global variable
-        status = True
+
         if arp_packet: 
             log.info("ARP request received by controller.")
-            self.handle_ARP_Packet(event, packet, arp_packet, status)        
+            self.handle_ARP_Packet(event, packet, arp_packet)        
             
         
         # If not arp packet, check if its an ICMP packet.
         if packet.type == ethernet.IP_TYPE:
             log.info("ICMP packet received by controller.")
-            self.handle_ICMP_packet(event, packet)
+            self.handle_ICMP_packet(event)
 
         return  
         
-    def handle_ARP_Packet(self, event, packet, arp_packet, status):
+    def handle_ARP_Packet(self, event, packet, arp_packet):
         # Getting the port of the event.
         inport = event.port 
         # Extracting the packet from the event.
@@ -85,7 +90,8 @@ class Controller(object):
             arp_reply.protodst = arp_packet.protosrc
             arp_reply.protosrc = arp_packet.protodst
 
-            # If the ARP REQUEST's dst IP is 10.0.0.10, return the mac address 00:00:00:00:00:05.
+            # If the ARP REQUEST's dst IP is 10.0.0.10 meaning it wants the mac address of 10.0.0.10, then
+            # return the mac address of h5 or h6 depending on the bool value called status. (Round Robin).
             if (arp_packet.protodst == IPAddr("10.0.0.10")):
                 if (status):
                     arp_reply.hwsrc =  EthAddr("00:00:00:00:00:05")
@@ -118,8 +124,9 @@ class Controller(object):
 
             log.info("ARP Reply sent. The MAC address sent was: %s" % (str(arp_reply.hwsrc)))
 
-            # Creating a match rule for the switch.
+            # Creating a match rule for the switch. (e.g. h1-h5)
             msg = of.ofp_flow_mod()
+            # The incoming port will be the port that this ARP_REQUEST packet came in from.
             msg.match.in_port = inport
             msg.match.dl_type = 0x0800
             msg.match.nw_dst = IPAddr("10.0.0.10")
@@ -130,7 +137,8 @@ class Controller(object):
                 address = "10.0.0.5"
             msg.actions.append(of.ofp_action_nw_addr.set_dst(IPAddr(address)))
 
-            # Telling the switch to go throughout port 5.
+            # Telling which port to go out through. (e.g. port 5)
+            
             if (address == "10.0.0.5"):
                 out_port = 5
             else:
@@ -139,6 +147,7 @@ class Controller(object):
             msg.actions.append(out_action)
             event.connection.send(msg)
 
+            # Creating a match rule for the opposite direction. (e.g. h5-h1)
             msg = of.ofp_flow_mod()
             msg.match.in_port = out_port
             msg.match.dl_type = 0x0800
@@ -152,9 +161,9 @@ class Controller(object):
             return
         
 
-    def handle_ICMP_packet(self, event, icmp_packet):
+    def handle_ICMP_packet(self, event):
         log.info("Telling the switch to forward this ICMP Packet to the correct port.")
-        ip_packet = icmp_packet.payload
+        # ip_packet = icmp_packet.payload
 
         msg = of.ofp_packet_out(data = event.ofp)
         if event.port == 1 or event.port == 3:
@@ -163,7 +172,6 @@ class Controller(object):
             out_port = 6
         
         msg.actions.append(of.ofp_action_output(port = out_port))
-        msg.in_port = out_port
         event.connection.send(msg)
 
 def launch():

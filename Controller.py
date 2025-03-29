@@ -14,8 +14,6 @@ from pox.lib.util import dpid_to_str, str_to_bool
 from pox.lib.recoco import Timer
 from pox.lib.revent import EventHalt
 
-import pox.openflow.libopenflow_01 as of
-
 """
 This is a POX controller. That handles load balancing on a switch in a Round Robin fashion.
 """
@@ -52,13 +50,13 @@ class Controller(object):
         # Log the initializer.
         log.info("Initializing the controller.")
 
-
+    # This method handles packets that come in. 
     def handle_PacketIn(self, event):
 
         """
         This method handles the packets that come into the controller.
-        When a packet is sent to the controller, it actually comes in as an event. 
-        Then you have to parse that event to turn it into a packet.
+        When a packet that doesn't match the flow rules come in, it sends this
+        method to one of two methods. ARP handler method or ICMP handler method.
         """
         # Extracting the packet from the event.
         packet = event.parsed
@@ -66,7 +64,6 @@ class Controller(object):
         arp_packet = packet.find('arp')
 
         if arp_packet: 
-
             log.info("ARP request received by controller from port: %s", str(event.port))
             log.info("ARP REQUEST's src: %s dst: %s", 
             str(arp_packet.protosrc), str(arp_packet.protodst))
@@ -80,7 +77,7 @@ class Controller(object):
                 self.handle_ICMP_packet(event)
 
         return  
-        
+    # This method builds an arp reply packet and sets the flow rule table.
     def handle_ARP_Packet(self, event, packet, arp_packet):
         # Getting the port of the event.
         inport = event.port 
@@ -119,19 +116,12 @@ class Controller(object):
                 arp_reply.hwsrc = EthAddr("00:00:00:00:00:04")
 
             # Constructing an ARP REPLY packet.
-            e = ethernet(type=packet.type, src=event.connection.eth_addr,
-                            dst=arp_packet.hwsrc)
+            e = ethernet(type=packet.type, src=event.connection.eth_addr, dst=arp_packet.hwsrc)
             e.payload = arp_reply
-            if packet.type == ethernet.VLAN_TYPE:
-                v_rcv = packet.find('vlan')
-                e.payload = vlan(eth_type = e.type,
-                                 payload = e.payload,
-                                 id = v_rcv.id,
-                                 pcp = v_rcv.pcp)
-                e.type = ethernet.VLAN_TYPE
 
             log.info("Answering ARP that was received from: %s" % (str(arp_reply.protodst)))
 
+            # Sending the arp reply to the switch.
             msg = of.ofp_packet_out()
             msg.data = e.pack()
             msg.actions.append(of.ofp_action_output(port = of.OFPP_IN_PORT))
@@ -141,7 +131,7 @@ class Controller(object):
             log.info("ARP Reply sent. The MAC address sent was: %s" % (str(arp_reply.hwsrc)))
             log.info("ARP REPLY's src: %s dst: %s", 
             str(arp_reply.protosrc), str(arp_reply.protodst))
-
+            
             # Creating a match rule for the switch. (e.g. h1-h5)
             msg = of.ofp_flow_mod()
 
@@ -184,12 +174,13 @@ class Controller(object):
 
             return
         
-
+    # This method handles ICMP packets that come through. Basically just tells the switch to use the
+    # flow table rules to handle the ICMP packet.
     def handle_ICMP_packet(self, event):
         log.info("Telling the switch to forward this ICMP Packet to the correct port.")
 
         icmp_packet = event.parsed
-
+        # Building message.
         msg = of.ofp_packet_out(data = event.ofp)
         msg.actions.append(of.ofp_action_output(port = of.OFPP_TABLE))
         event.connection.send(msg)

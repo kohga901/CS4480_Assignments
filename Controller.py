@@ -15,10 +15,14 @@ from pox.lib.recoco import Timer
 from pox.lib.revent import EventHalt
 
 """
-This is a POX controller. That handles load balancing on a switch in a Round Robin fashion.
+This is a POX controller. That handles load balancing on a switch in a Round Robin fashion. 
+It uses the bool value "status" in order to handle the load balancing. If the status is true,
+ direct load to h5. If the status if false, direct load to h6.
 """
 class Controller(object):
-    
+    """
+    This bool value is the main part of this program.
+    """
     status = True
     macToPort= {"00:00:00:00:00:01" : 1, 
                 "00:00:00:00:00:02" : 2, 
@@ -32,6 +36,17 @@ class Controller(object):
                 "10.0.0.4" : 4, 
                 "10.0.0.5" : 5, 
                 "10.0.0.6" : 6}
+    PortToIp= {1 : "10.0.0.1", 
+                2 : "10.0.0.2", 
+                3 : "10.0.0.3",
+                4 : "10.0.0.4", 
+                5 : "10.0.0.5",
+                6 : "10.0.0.6",}
+    IpToMac= {"10.0.0.1" : "00:00:00:00:00:01", 
+            "10.0.0.2" : "00:00:00:00:00:02", 
+            "10.0.0.3" : "00:00:00:00:00:03", 
+            "10.0.0.4" : "00:00:00:00:00:04", 
+            "10.0.0.5" : "00:00:00:00:00:05"}
     """ 
     This is a controller class that handles packets.
     
@@ -96,8 +111,8 @@ class Controller(object):
             arp_reply.protodst = arp_packet.protosrc
             arp_reply.protosrc = arp_packet.protodst
 
-            # If the ARP REQUEST's dst IP is 10.0.0.10 meaning it wants the mac address of 10.0.0.10, then
-            # return the mac address of h5 or h6 depending on the bool value called status. (Round Robin).
+            # If the ARP REQUEST's dst IP is 10.0.0.10, then return the mac address of h5 or h6 by 
+            # switching between the two as per Round Robin.
             if (arp_packet.protodst == IPAddr("10.0.0.10")):
                 if (self.status):
                     arp_reply.hwsrc =  EthAddr("00:00:00:00:00:05")
@@ -105,15 +120,8 @@ class Controller(object):
                 else:
                     arp_reply.hwsrc =  EthAddr("00:00:00:00:00:06")
                     self.status = True
-
-            if (arp_packet.protodst == IPAddr("10.0.0.1")):
-                arp_reply.hwsrc = EthAddr("00:00:00:00:00:01")
-            if (arp_packet.protodst == IPAddr("10.0.0.2")):
-                arp_reply.hwsrc = EthAddr("00:00:00:00:00:02")
-            if (arp_packet.protodst == IPAddr("10.0.0.3")):
-                arp_reply.hwsrc = EthAddr("00:00:00:00:00:03")
-            if (arp_packet.protodst == IPAddr("10.0.0.4")):
-                arp_reply.hwsrc = EthAddr("00:00:00:00:00:04")
+            else:
+                arp_reply.hwsrc = EthAddr(self.IpToMac[str(arp_packet.protodst)])
 
             # Constructing an ARP REPLY packet.
             e = ethernet(type=packet.type, src=event.connection.eth_addr, dst=arp_packet.hwsrc)
@@ -141,24 +149,18 @@ class Controller(object):
             msg.match.dl_type = 0x0800
             msg.match.nw_dst = arp_packet.protodst
             msg.match.nw_src = arp_packet.protosrc
-
-
             # If the ARP_REQUEST came in through ports 1-4, then set a rule that sets the dst as 10.0.0.5 or 10.0.0.6.
-            if (inport == 1 or inport == 2 or inport == 3 or inport == 4):
-                # If status is true, direct all traffic to 10.0.0.6.
-                # If status is false, direct all traffic to 10.0.0.5.
+            
+            # If dst addr of arp request is 10.0.0.10, check status and set out port as 5 or 6 depending on status. and set dst
+            # if dst addr of arp is 10.0.0.1 or 10.0.0.2, then put the appropriate port. and set src
+            if (str(arp_packet.protodst) == "10.0.0.10"):
+                dstAddress = str(arp_packet.protodst)
                 if (self.status):
-                    dstAddress = "10.0.0.6"
-                else:
-                    dstAddress = "10.0.0.5"
-                
-                # Setting the out port.
-                if (dstAddress == "10.0.0.6"):
                     out_port = 6
                 else:
                     out_port = 5
                 # Set the rule where the dst of the ICMP packet is changed from 10.0.0.10 to h5 or h6.
-                msg.actions.append(of.ofp_action_nw_addr.set_dst(IPAddr(dstAddress)))
+                msg.actions.append(of.ofp_action_nw_addr.set_dst(IPAddr(self.PortToIp[out_port])))
 
             # If the ARP_REQUEST came in through ports 5 or 6, then set a rule that sets the src as 10.0.0.10.
             else:

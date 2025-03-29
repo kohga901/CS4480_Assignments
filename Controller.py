@@ -1,6 +1,3 @@
-"""
-This is a POX controller.
-"""
 from pox.core import core
 import pox
 log = core.getLogger()
@@ -19,7 +16,9 @@ from pox.lib.revent import EventHalt
 
 import pox.openflow.libopenflow_01 as of
 
-
+"""
+This is a POX controller. That handles load balancing on a switch in a Round Robin fashion.
+"""
 class Controller(object):
     
     status = True
@@ -40,6 +39,7 @@ class Controller(object):
     
     It takes in an incoming packet, and decides what to do with it.
     """
+    # Initializer.
     def __init__(self, connection):
         # Initialize the connection from this controller to the switch.
         self.connection = connection
@@ -66,14 +66,18 @@ class Controller(object):
         arp_packet = packet.find('arp')
 
         if arp_packet: 
-            log.info("ARP request received by controller.")
-            self.handle_ARP_Packet(event, packet, arp_packet)        
+
+            log.info("ARP request received by controller from port: %s", str(event.port))
+            log.info("ARP REQUEST's src: %s dst: %s", 
+            str(arp_packet.protosrc), str(arp_packet.protodst))
+            self.handle_ARP_Packet(event, packet, arp_packet)      
             
-        
-        # If not arp packet, check if its an ICMP packet.
-        if packet.type == ethernet.IP_TYPE:
-            log.info("ICMP packet received by controller.")
-            self.handle_ICMP_packet(event)
+        else:
+            # If not arp packet, check if its an ICMP packet.
+            icmp_pkt = packet.find('icmp')
+            if icmp_pkt:
+                log.info("ICMP packet received by controller from port: %s", str(event.port))
+                self.handle_ICMP_packet(event)
 
         return  
         
@@ -118,6 +122,13 @@ class Controller(object):
             e = ethernet(type=packet.type, src=event.connection.eth_addr,
                             dst=arp_packet.hwsrc)
             e.payload = arp_reply
+            if packet.type == ethernet.VLAN_TYPE:
+                v_rcv = packet.find('vlan')
+                e.payload = vlan(eth_type = e.type,
+                                 payload = e.payload,
+                                 id = v_rcv.id,
+                                 pcp = v_rcv.pcp)
+                e.type = ethernet.VLAN_TYPE
 
             log.info("Answering ARP that was received from: %s" % (str(arp_reply.protodst)))
 
@@ -128,7 +139,8 @@ class Controller(object):
             event.connection.send(msg)
 
             log.info("ARP Reply sent. The MAC address sent was: %s" % (str(arp_reply.hwsrc)))
-
+            log.info("ARP REPLY's src: %s dst: %s", 
+            str(arp_reply.protosrc), str(arp_reply.protodst))
 
             # Creating a match rule for the switch. (e.g. h1-h5)
             msg = of.ofp_flow_mod()
@@ -139,6 +151,8 @@ class Controller(object):
             msg.match.dl_type = 0x0800
             msg.match.nw_dst = arp_packet.protodst
             msg.match.nw_src = arp_packet.protosrc
+
+
             # If the ARP_REQUEST came in through ports 1-4, then set a rule that sets the dst as 10.0.0.5 or 10.0.0.6.
             if (inport == 1 or inport == 2 or inport == 3 or inport == 4):
                 # If status is true, direct all traffic to 10.0.0.6.
@@ -150,58 +164,37 @@ class Controller(object):
                 
                 # Setting the out port.
                 if (dstAddress == "10.0.0.6"):
-                        out_port = 6
+                    out_port = 6
                 else:
                     out_port = 5
                 # Set the rule where the dst of the ICMP packet is changed from 10.0.0.10 to h5 or h6.
                 msg.actions.append(of.ofp_action_nw_addr.set_dst(IPAddr(dstAddress)))
-                out_action = of.ofp_action_output(port = out_port)
-                msg.actions.append(out_action)
-                event.connection.send(msg)
 
             # If the ARP_REQUEST came in through ports 5 or 6, then set a rule that sets the src as 10.0.0.10.
             else:
                 out_port = self.IPtoPort[str(arp_packet.protodst)]
-                msg.actions.append(of.ofp_action_nw_addr.set_sst(IPAddr("10.0.0.10")))
+                msg.actions.append(of.ofp_action_nw_addr.set_src(IPAddr("10.0.0.10")))
             
             # Telling which port to go out through. (e.g. port 5)
             out_action = of.ofp_action_output(port = out_port)
             msg.actions.append(out_action)
             event.connection.send(msg)
-
-            # Creating a match rule for the opposite direction. (e.g. h5-h1)
-            # msg = of.ofp_flow_mod()
-            # msg.match.in_port = out_port
-            # msg.match.dl_type = 0x0800
-            # msg.match.nw_dst = arp_packet.protosrc
-            # msg.match.nw_src = IPAddr(address)
-            # msg.actions.append(of.ofp_action_nw_addr.set_src(IPAddr("10.0.0.10")))
-            # out_action = of.ofp_action_output(port = inport)
-            # msg.actions.append(out_action)
-            # event.connection.send(msg)
+            log.info("Matching on inport: %s, nw_dst: %s, nw_src: %s" % (str(inport),
+                         str(arp_packet.protodst), str(arp_packet.protosrc)))
 
             return
         
 
     def handle_ICMP_packet(self, event):
         log.info("Telling the switch to forward this ICMP Packet to the correct port.")
-        # ip_packet = icmp_packet.payload
+
         icmp_packet = event.parsed
-        
-        out_port = 0
-        # Getting the dst and determining the out port of this ICMP packet.
-        if (event.port == 1 or event.port == 3):
-            log.info("ICMP packet came in from port: 1 or 3")
-            out_port = 5
-        if (event.port == 2 or event.port == 4):
-            log.info("ICMP packet came in from port: 2 or 4")
-            out_port = 6
-        elif event.port == 5 or event.port == 6:
-            out_port = self.IPtoPort[str(icmp_packet.dst)]
-        
+
         msg = of.ofp_packet_out(data = event.ofp)
-        msg.actions.append(of.ofp_action_output(port = out_port))
+        msg.actions.append(of.ofp_action_output(port = of.OFPP_TABLE))
         event.connection.send(msg)
+        log.info("ICMP packet forwarded: inport: %s, src: %s, dst: %s", event.port, 
+         str(icmp_packet.payload.srcip), str(icmp_packet.payload.dstip))
 
 def launch():
     """

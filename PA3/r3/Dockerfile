@@ -10,18 +10,25 @@ RUN curl -s https://deb.frrouting.org/frr/keys.gpg | \
 tee /usr/share/keyrings/frrouting.gpg > /dev/null
 RUN apt install lsb-release
 RUN FRRVER="frr-stable"
-RUN echo deb "[signed-by=/usr/share/keyrings/frrouting.gpg]" https://deb.frrouting.org/frr \ 
+RUN echo deb "[signed-by=/usr/share/keyrings/frrouting.gpg]" https://deb.frrouting.org/frr
 RUN $(lsb_release -s -c) $FRRVER | tee -a /etc/apt/sources.list.d/frr.list
 RUN apt update && apt -y install frr frr-pythontools
 
-# Enable OSPF by putting in the frr.config file inside the FRR.
-# First set the ospf=yes inside /etc/frr/daemons
+# Set the ospfd to yes in this script because the daemons get reset after the container initializes.
 RUN sed -i 's/ospfd=no/ospfd=yes/' /etc/frr/daemons
 
-# Second copy in the r1-frr.conf file into the container's frr.
-COPY r2-frr.conf /etc/frr/frr.conf
+# Enable OSPF by putting in the frr.config file inside the FRR.
+# Copy in the r1-frr.conf file into the container's frr.
+COPY r3-frr.conf /etc/frr/frr.conf
 
+# Change ownership of the frr.conf file to frr so that frr will be able to run it.
+RUN chown frr:frr /etc/frr/frr.conf
+
+# Copy the script and then make it executable.
 COPY script.sh /script.sh
 RUN chmod +x /script.sh
 
+# Run the script.
 CMD ["/script.sh"]
+
+

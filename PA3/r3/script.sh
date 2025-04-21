@@ -1,5 +1,6 @@
 #!/bin/bash
 
+service frr restart
+
 # Keep container running
-sed -i 's/ospfd=no/ospfd=yes/' /etc/frr/daemons
-exec tail -f /dev/null
+bash

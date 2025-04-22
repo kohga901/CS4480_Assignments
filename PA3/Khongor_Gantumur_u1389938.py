@@ -14,7 +14,8 @@ import subprocess
 # You first need to set it up with the command:         python orchestrator.py --setupTopology
 # Then you can switch the traffic with the command:     python orchestrator.py --switchTraffic N or S.
 # Then you can issue a ping with the command:           python orchestrator.py --ping.
-# Then you can restart the topology with the command:   python orchestrator.py --restart
+# [OPTIONAL] Then you can restart the topology with the 
+# command:                                              python orchestrator.py --restart
 
 def main():
     parser = argparse.ArgumentParser()

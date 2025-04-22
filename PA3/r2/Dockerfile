@@ -15,14 +15,10 @@ RUN $(lsb_release -s -c) $FRRVER | tee -a /etc/apt/sources.list.d/frr.list
 RUN apt update && apt -y install frr frr-pythontools
 
 # Set the ospfd to yes in this script because the daemons get reset after the container initializes.
-RUN sed -i 's/ospfd=no/ospfd=yes/' /etc/frr/daemons
+COPY ./daemons /etc/frr/daemons
 
 # Enable OSPF by putting in the frr.config file inside the FRR.
-# Copy in the r1-frr.conf file into the container's frr.
-COPY r2-frr.conf /etc/frr/frr.conf
-
-# Change ownership of the frr.conf file to frr so that frr will be able to run it.
-RUN chown frr:frr /etc/frr/frr.conf
+COPY ./r2-frr.conf /etc/frr/frr.conf
 
 # Copy the script and then make it executable.
 COPY script.sh /script.sh

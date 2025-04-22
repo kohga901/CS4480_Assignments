@@ -1,5 +1,20 @@
 import argparse
 import subprocess
+# Khongor Gantumur
+# u1389938
+
+# This python file is used to orchestrate the topology and manage the containers and routers.
+
+# HOW TO USE THIS FILE:
+# 1. To set up the topology, run:                       python orchestrator.py --setupTopology
+# 2. To switch traffic, run:                            python orchestrator.py --switchTraffic N (for northbound) or S (for southbound).
+# 3. To restart the topology, run:                      python orchestrator.py --restart
+# 4. To issue a ping from host A to host B, run:        python orchestrator.py --ping
+
+# You first need to set it up with the command:         python orchestrator.py --setupTopology
+# Then you can switch the traffic with the command:     python orchestrator.py --switchTraffic N or S.
+# Then you can issue a ping with the command:           python orchestrator.py --ping.
+# Then you can restart the topology with the command:   python orchestrator.py --restart
 
 def main():
     parser = argparse.ArgumentParser()

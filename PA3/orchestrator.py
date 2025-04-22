@@ -6,22 +6,31 @@ def main():
     
     # Add optional arguments
     parser.add_argument('--setupTopology', action='store_true', help="Sets up the topology, containers, routers and frrouting")
-    parser.add_argument('--switchTraffic', type=str, help="Switch traffic between containers")
+    
+    # Add restart argument
+    parser.add_argument('--restart', action='store_true', help="Restarts the topology.")
+
+    # Add switchTraffic argument
+    parser.add_argument('--switchTraffic', choices=['N', 'S'], help='This flag must be followed by N or S. N for northbound trafic and S for southbound traffic.')
+    
+    # Add ping argument
     parser.add_argument('--ping', action='store_true', help="Issues a ping from host A to host B.")
 
     args = parser.parse_args()
     
     # Handle the arguments
     if args.setupTopology:
-        if args.setupTopology:
-            build_topology()
+        build_topology()
+    elif args.restart:
+        subprocess.run(["docker", "compose", "down"])
+        build_topology()
         
-    if args.switchTraffic:
+    elif args.switchTraffic:
         if args.switchTraffic == "N":
             switch_traffic("N")
         elif args.switchTraffic == "S":
             switch_traffic("S")
-    if args.ping:
+    elif args.ping:
         send_ping()
     else:
         print("No valid arguments provided. Use --help for more information.")
@@ -31,22 +40,53 @@ def build_topology():
     subprocess.run(["docker", "compose", "up", "--build", "-d"])
     
 def switch_traffic(path):
+    # Get the interfaces for the routers.
+    # Interfaces for router 1
+    ip_to_interface = get_interface_ip_map("part1-r1-1")
+    interface_of_net_11 = ip_to_interface["10.0.11.4"]
+    interface_of_net_14 = ip_to_interface["10.0.14.3"]
+
+    # Interfaces for router 3
+    ip_to_interface = get_interface_ip_map("part1-r3-1")
+    interface_of_net_12 = ip_to_interface["10.0.12.3"]
+    interface_of_net_13 = ip_to_interface["10.0.13.4"]
+
     # Switches the traffic based on the specified path.
-    if path == "N":
-        subprocess.run(["docker", "exec", "-it", "part1-r2-1", "vtysh", "-c", "configure terminal", "-c", "interface eth0", "-c", "ip ospf cost 10", "-c", "end"])
-        subprocess.run(["docker", "exec", "-it", "part1-r2-1", "vtysh", "-c", "configure terminal", "-c", "interface eth1", "-c", "ip ospf cost 10", "-c", "end"])
-        subprocess.run(["docker", "exec", "-it", "part1-r4-1", "vtysh", "-c", "configure terminal", "-c", "interface eth0", "-c", "ip ospf cost 5", "-c", "end"])
-        subprocess.run(["docker", "exec", "-it", "part1-r4-1", "vtysh", "-c", "configure terminal", "-c", "interface eth1", "-c", "ip ospf cost 5", "-c", "end"])
-    elif path == "S":
-        subprocess.run(["docker", "exec", "-it", "part1-r4-1", "vtysh", "-c", "configure terminal", "-c", "interface eth0", "-c", "ip ospf cost 10", "-c", "end"])
-        subprocess.run(["docker", "exec", "-it", "part1-r4-1", "vtysh", "-c", "configure terminal", "-c", "interface eth1", "-c", "ip ospf cost 10", "-c", "end"])
-        subprocess.run(["docker", "exec", "-it", "part1-r2-1", "vtysh", "-c", "configure terminal", "-c", "interface eth0", "-c", "ip ospf cost 5", "-c", "end"])
-        subprocess.run(["docker", "exec", "-it", "part1-r2-1", "vtysh", "-c", "configure terminal", "-c", "interface eth1", "-c", "ip ospf cost 5", "-c", "end"])
+    if path == "S":
+        subprocess.run(["docker", "exec", "-it", "part1-r1-1", "vtysh", "-c", "configure terminal", "-c", "interface" + " " + interface_of_net_11, "-c", "ip ospf cost 10", "-c", "end"])
+        subprocess.run(["docker", "exec", "-it", "part1-r1-1", "vtysh", "-c", "configure terminal", "-c", "interface" + " " + interface_of_net_14, "-c", "ip ospf cost 5", "-c", "end"])
+        subprocess.run(["docker", "exec", "-it", "part1-r3-1", "vtysh", "-c", "configure terminal", "-c", "interface" + " " + interface_of_net_12, "-c", "ip ospf cost 10", "-c", "end"])
+        subprocess.run(["docker", "exec", "-it", "part1-r3-1", "vtysh", "-c", "configure terminal", "-c", "interface" + " " + interface_of_net_13, "-c", "ip ospf cost 5", "-c", "end"])
+
+    elif path == "N":
+        subprocess.run(["docker", "exec", "-it", "part1-r1-1", "vtysh", "-c", "configure terminal", "-c", "interface" + " " + interface_of_net_11, "-c", "ip ospf cost 5", "-c", "end"])
+        subprocess.run(["docker", "exec", "-it", "part1-r1-1", "vtysh", "-c", "configure terminal", "-c", "interface" + " " + interface_of_net_14, "-c", "ip ospf cost 10", "-c", "end"])
+        subprocess.run(["docker", "exec", "-it", "part1-r3-1", "vtysh", "-c", "configure terminal", "-c", "interface" + " " + interface_of_net_12, "-c", "ip ospf cost 5", "-c", "end"])
+        subprocess.run(["docker", "exec", "-it", "part1-r3-1", "vtysh", "-c", "configure terminal", "-c", "interface" + " " + interface_of_net_13, "-c", "ip ospf cost 10", "-c", "end"])
     else:
         print("Invalid traffic type specified.")
+
 def send_ping():
     # Issues a ping from host A to host B.
-    subprocess.run(["docker", "exec", "-it", "part1-ha-1", "ping", "10.0.15.3", "-c", "5"])
+    subprocess.run(["docker", "exec", "-it", "part1-ha-1", "ping", "10.0.15.3", "-c", "6"])
+
+def get_interface_ip_map(node):
+    ip_to_interface = {}
+    # Get the IP address of the interfaces in the node.
+    result = subprocess.run(["docker", "exec", node, "ip", "-o", "-4", "addr", "show"], capture_output=True, text=True
+)
+
+    # Split the output into lines
+    output = result.stdout.strip().split('\n')
+    
+    # Iterate through each line and extract the interface number and IP address. And store it in the mapping.
+    for line in output:
+        line_split = line.split()
+        interface_number = line_split[1]
+        ip_address = line_split[3].split('/')[0]
+        ip_to_interface[ip_address] = interface_number
+
+    return ip_to_interface
 
 if __name__ == "__main__":
     main()

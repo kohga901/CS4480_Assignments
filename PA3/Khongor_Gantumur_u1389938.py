@@ -7,6 +7,7 @@ import subprocess
 
 # HOW TO USE THIS FILE:
 # 1. To set up the topology, run:                       python orchestrator.py --setupTopology
+# NOTE: After setup is complete, wait 30 seconds or so for the ospf to share their routing tables. Running ping too early results in packet loss.
 # 2. To switch traffic, run:                            python orchestrator.py --switchTraffic N (for northbound) or S (for southbound).
 # 3. To restart the topology, run:                      python orchestrator.py --restart
 # 4. To issue a ping from host A to host B, run:        python orchestrator.py --ping
@@ -17,6 +18,7 @@ import subprocess
 # [OPTIONAL] Then you can restart the topology with the 
 # command:                                              python orchestrator.py --restart
 
+# Main function to handle command line arguments and orchestrate the topology.
 def main():
     parser = argparse.ArgumentParser()
     
@@ -51,19 +53,22 @@ def main():
     else:
         print("No valid arguments provided. Use --help for more information.")
 
+
+# Function to build the topology, containers, routers and frrouting.
 def build_topology():
     # Builds the topology, containers, routers and frrouting.
     subprocess.run(["docker", "compose", "up", "--build", "-d"])
-    
+
+# Switches the traffic between the containers based on the specified path (S or N).
 def switch_traffic(path):
     # Get the interfaces for the routers.
     # Interfaces for router 1
-    ip_to_interface = get_interface_ip_map("part1-r1-1")
+    ip_to_interface = get_interfaces_with_the_ip("part1-r1-1")
     interface_of_net_11 = ip_to_interface["10.0.11.4"]
     interface_of_net_14 = ip_to_interface["10.0.14.3"]
 
     # Interfaces for router 3
-    ip_to_interface = get_interface_ip_map("part1-r3-1")
+    ip_to_interface = get_interfaces_with_the_ip("part1-r3-1")
     interface_of_net_12 = ip_to_interface["10.0.12.3"]
     interface_of_net_13 = ip_to_interface["10.0.13.4"]
 
@@ -80,27 +85,37 @@ def switch_traffic(path):
         subprocess.run(["docker", "exec", "-it", "part1-r3-1", "vtysh", "-c", "configure terminal", "-c", "interface" + " " + interface_of_net_12, "-c", "ip ospf cost 5", "-c", "end"])
         subprocess.run(["docker", "exec", "-it", "part1-r3-1", "vtysh", "-c", "configure terminal", "-c", "interface" + " " + interface_of_net_13, "-c", "ip ospf cost 10", "-c", "end"])
     else:
-        print("Invalid traffic type specified.")
+        print("Invalid traffic direction specified. Traffic direction must only be N or S.")
 
+# Function to issue a ping from host A to host B.
 def send_ping():
     # Issues a ping from host A to host B.
     subprocess.run(["docker", "exec", "-it", "part1-ha-1", "ping", "10.0.15.3", "-c", "6"])
 
-def get_interface_ip_map(node):
+# Function to get the interface IP mapping for a given node.
+def get_interfaces_with_the_ip(node):
+    # Initialize the dictionary for mapping ip addresses to their corresponding interfaces on the routers.
     ip_to_interface = {}
     # Get the IP address of the interfaces in the node.
-    result = subprocess.run(["docker", "exec", node, "ip", "-o", "-4", "addr", "show"], capture_output=True, text=True
-)
+    result = subprocess.run(["docker", "exec", node, "ip", "-o", "-4", "addr", "show"], capture_output=True, text=True)
 
     # Split the output into lines
-    output = result.stdout.strip().split('\n')
+    output = result.stdout
+    output = output.strip()
+    output = output.split('\n')
     
-    # Iterate through each line and extract the interface number and IP address. And store it in the mapping.
+    # Iterate through each line of the output and extract the interface numbers and IP addresses. 
+    # And then store it in the dictionary.
     for line in output:
-        line_split = line.split()
-        interface_number = line_split[1]
-        ip_address = line_split[3].split('/')[0]
-        ip_to_interface[ip_address] = interface_number
+        # Split the line with whitespace.
+        split_line = line.split()
+        # Get the interface number from the line where the second item is the eth
+        eth_number = split_line[1]
+        # Get the IP address from the line.
+        ip_address = split_line[3]
+        ip_address = ip_address.split('/')[0]
+        # Store the ethernet number with the corresponing ip address.
+        ip_to_interface[ip_address] = eth_number
 
     return ip_to_interface
 
